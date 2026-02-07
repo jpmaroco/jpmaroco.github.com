@@ -1,0 +1,147 @@
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+
+
+<div class="container mx-auto p-8 flex justify-center">
+    <div class="bg-white shadow-md rounded-lg p-6 mb-6 w-1/2">
+        <div class="mb-4">
+            <label for="studentId" class="block text-gray-700 text-sm font-bold mb-2">Número de Aluno:</label>
+            <input type="text" id="studentId" name="studentId" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="Introduza o seu número de aluno" data-has-listeners="true">
+        </div>
+
+        <div class="mb-4">
+            <label for="subject" class="block text-gray-700 text-sm font-bold mb-2">Disciplina:</label>
+            <div class="relative w-full">
+                <select id="subject" name="subject" class="block appearance-none w-full bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 pr-8 rounded shadow leading-tight focus:outline-none focus:shadow-outline">
+                    <option value="" disabled="" selected="">Selecione a UC</option>
+                    <option value="Análise de Dados - Mestrado">Análise de Dados - Mestrado</option>
+                    <option value="Análise de Dados II - Lic Gestão">Análise de Dados II - Lic Gestão</option>
+                    <option value="Estatística Aplicada - Lic Serv Social">Estatística Aplicada - Lic Serv Social</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                    <svg class="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-center mt-6">
+            <button type="button" onclick="startCamera()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                Iniciar Câmera
+            </button>
+        </div>
+    </div>
+
+    <div id="cameraSection" class="bg-white shadow-md rounded-lg p-6 hidden w-1/2">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4 text-center">Digitalize o QR Code</h2>
+        <div class="relative w-full max-w-md mx-auto">
+            <video id="cameraFeed" class="w-full rounded-md" autoplay="" data-video="0"></video>
+            <canvas id="qrCanvas" class="absolute top-0 left-0 hidden"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    let videoStream;
+    const googleSheetsUrl = 'https://script.google.com/macros/s/AKfycbxysGO7jb2QtI9gX91JAW-YAOIOXFRrYdEIwgwSQrJuK9YnUMM0d23XFnMPIcVg9OZ6/exec';
+
+    // Ordenar as opções da disciplina alfabeticamente
+    const subjectSelect = document.getElementById('subject');
+    const options = Array.from(subjectSelect.options);
+    options.sort((a, b) => a.text.localeCompare(b.text));
+    options.forEach(option => subjectSelect.add(option));
+
+    // Adicionar a opção "Selecione a UC" no topo
+    const defaultOption = document.createElement('option');
+    defaultOption.value = "";
+    defaultOption.text = "Selecione a UC";
+    defaultOption.disabled = true;
+    defaultOption.selected = true;
+    subjectSelect.insertBefore(defaultOption, subjectSelect.firstChild);
+
+    function startCamera() {
+        const studentId = document.getElementById('studentId').value.trim();
+        if (!studentId) {
+            alert("Por favor, preencha o número de aluno.");
+            return;
+        }
+
+        navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: "environment"
+                }
+            })
+            .then(stream => {
+                videoStream = stream;
+                document.getElementById('cameraFeed').srcObject = stream;
+                document.getElementById('cameraSection').classList.remove('hidden');
+                scanQRCode();
+            })
+            .catch(err => alert("Erro ao acessar a câmera: " + err));
+    }
+
+    function scanQRCode() {
+        const cameraFeed = document.getElementById('cameraFeed');
+        const canvas = document.getElementById('qrCanvas');
+        const context = canvas.getContext('2d');
+
+        function tick() {
+            if (cameraFeed.readyState === cameraFeed.HAVE_ENOUGH_DATA) {
+                canvas.width = cameraFeed.videoWidth;
+                canvas.height = cameraFeed.videoHeight;
+                context.drawImage(cameraFeed, 0, 0, canvas.width, canvas.height);
+
+                const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+                const qrCode = jsQR(imageData.data, canvas.width, canvas.height);
+
+                if (qrCode) {
+                    const studentId = document.getElementById('studentId').value;
+                    const subject = document.getElementById('subject').value;
+                    const timestamp = new Date().toISOString();
+
+                    sendToGoogleSheets(studentId, subject, qrCode.data, timestamp);
+                    stopCamera();
+                }
+            }
+            requestAnimationFrame(tick);
+        }
+
+        tick();
+    }
+
+    function sendToGoogleSheets(studentId, subject, qrData, timestamp) {
+        const formData = new URLSearchParams();
+        formData.append("studentId", studentId);
+        formData.append("subject", subject);
+        formData.append("qrData", qrData);
+        formData.append("timestamp", timestamp);
+
+        fetch(googleSheetsUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: formData.toString()
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.result === "success") {
+                    alert("Presença registrada com sucesso!");
+                } else {
+                    alert("Erro: " + (data.message || "Desconhecido"));
+                }
+            })
+            .catch(error => {
+                console.error("Erro ao enviar dados:", error);
+                alert("Erro ao registrar presença.");
+            });
+    }
+
+    function stopCamera() {
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+        }
+        document.getElementById('cameraSection').classList.add('hidden');
+    }
+</script>
